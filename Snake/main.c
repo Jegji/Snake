@@ -1,7 +1,7 @@
 #include <curses.h>
 #include <time.h>
 #include <stdlib.h>
-#define FPS_CAP 15
+#define FPS_CAP 25
 
 enum Direction {
 	none, up, left, down, right, quit
@@ -17,18 +17,30 @@ struct Snake
 	struct Pos head;
 	enum Direction lastDir;
 	int length;
+	int col;
 	struct Pos* body;
+};
+
+struct SnakeArray {
+	struct Snake** array;
+	int lng;
 };
 
 void initSnake(struct Snake* snake, struct Pos start);
 void initBody(struct Pos* body, struct Pos head);
+void initSnakeArray(struct SnakeArray* arr);
+void pushSnake(struct SnakeArray* arr, struct Snake* snake);
+int removeSnake(struct SnakeArray* arr, struct Snake* snake);
 struct Pos* resizeBody(struct Pos* body, int lng);
 int moveSnake(struct Snake* snake);
+int moveSnakes(struct SnakeArray* arr);
 void printSnake(struct Snake snake);
+void printSnakes(struct SnakeArray* arr);
 void printApple(struct Pos apple);
 void printSnakePos(struct Snake snake);
-int checkColisionApple(struct Snake* snake, struct Pos* apple);
+int checkColisionApple(struct SnakeArray* arr, struct Pos* apple);
 int checkColisionSnake(struct Snake* snake, struct Snake* ekans);
+void chceckColisionSnakes(struct SnakeArray* arr);
 struct Pos shiftArray(struct Pos* body, int lng);
 struct Pos generateApple();
 enum Direction getInput();
@@ -37,35 +49,44 @@ void initCurses();
 
 int main() {
 	initCurses();
+	srand(time(NULL));
 	time_t prevTime = clock();
 	time_t currentTime;
 	double deltaTime;
+	int gameover = 0;
+
 	enum Direction input = none;
 	enum Direction dir = right;
-	int i = 0;
-	int gameover = 0;
 	struct Pos start = { 3,3 };
-	struct Snake snake;
-	srand(time(NULL));
-	struct Pos apple = generateApple();
-	initSnake(&snake, start);
+	struct Snake player;
+	initSnake(&player, start);
 
-	while (input != quit && gameover != 1) {
+	start.y += 10;
+	struct Snake ekans;
+	initSnake(&ekans, start);
+
+	struct SnakeArray snakeArray;
+	initSnakeArray(&snakeArray);
+	pushSnake(&snakeArray, &player);
+	pushSnake(&snakeArray, &ekans);
+
+	struct Pos apple = generateApple(&snakeArray);
+	
+	while (input != quit && gameover != 1 && snakeArray.lng != 0) {
 		input = getInput();
-		if (input != none && input != quit && input % 2 != snake.lastDir % 2) {
+		if (input != none && input != quit && input % 2 != player.lastDir % 2) {
 			dir = input;
 		}
 
 		currentTime = clock();
 		deltaTime = (double)(currentTime - prevTime) / CLOCKS_PER_SEC;
 		if (deltaTime > (double)1 / FPS_CAP) {
-			snake.lastDir = dir;
+			player.lastDir = dir;
 			clear();
-			if (moveSnake(&snake) || checkColisionSnake(&snake, &snake)) {
-				gameover = 1;
-			}
-			checkColisionApple(&snake, &apple);
-			printSnake(snake);
+			moveSnakes(&snakeArray);
+			chceckColisionSnakes(&snakeArray);
+			checkColisionApple(&snakeArray, &apple);
+			printSnakes(&snakeArray);
 			printApple(apple);
 			box(stdscr, 0, 0);
 			refresh();
@@ -79,10 +100,50 @@ int main() {
 
 void initSnake(struct Snake* snake, struct Pos start)
 {
+	static int color = 2;
+	snake->col = color;
+	init_pair(color, color, color+1);
+	color++;
 	snake->head = start;
 	snake->length = 2;
 	snake->lastDir = right;
 	initBody(&snake->body, snake->head);
+}
+
+void initSnakeArray(struct SnakeArray* arr)
+{
+	arr->lng = 0;
+	arr->array = NULL;
+}
+
+void pushSnake(struct SnakeArray* arr, struct Snake* snake)
+{
+	arr->lng++;
+	struct Snake** newArr = malloc(arr->lng * sizeof(struct Snake*));
+	for (int i = 0; i < arr->lng - 1; i++) {
+		newArr[i] = arr->array[i];
+	}free(arr->array);
+	newArr[arr->lng - 1] = snake;
+	arr->array = newArr;
+}
+
+int removeSnake(struct SnakeArray* arr,struct Snake* snake)
+{
+	for (int i = 0; i < arr->lng; i++) {
+		if (arr->array[i] == snake) {
+			struct Snake** newArr = malloc((arr->lng - 1) * sizeof(struct Snake*));
+			for (int j = 0; j < i; j++) {
+				newArr[j] = arr->array[j];
+			}
+			for (int j = i + 1; j < arr->lng; j++) {
+				newArr[j - 1] = arr->array[j];
+			}
+			free(arr->array);
+			arr->array = newArr;
+			arr->lng--;
+			return 1;
+		}
+	}return 0;
 }
 
 void initBody(struct Pos** body, struct Pos head)
@@ -136,13 +197,32 @@ int moveSnake(struct Snake* snake)
 	}return 1;
 }
 
+int moveSnakes(struct SnakeArray* arr)
+{
+	int counter = 0;
+	for (int i = 0; i < arr->lng; i++) {
+		if (moveSnake(arr->array[i])) {
+			removeSnake(arr,arr->array[i]);
+		}
+	}
+	//return counter; //returns the numbers of colision with wall of all snakes
+	return 0; // doing nothing
+}
+
 void printSnake(struct Snake snake)
 {
 	for (int i = 0; i < snake.length; i++) {
 		move(snake.body[i].x, snake.body[i].y);
-		attron(COLOR_PAIR(2));
+		attron(COLOR_PAIR(snake.col));
 		printw("\xe2\x96\xa0");
-		attroff(COLOR_PAIR(2));
+		attroff(COLOR_PAIR(snake.col));
+	}
+}
+
+void printSnakes(struct SnakeArray* arr)
+{
+	for (int i = 0; i < arr->lng; i++) {
+		printSnake(*arr->array[i]);
 	}
 }
 
@@ -162,13 +242,15 @@ void printSnakePos(struct Snake snake)
 	}
 }
 
-int checkColisionApple(struct Snake* snake, struct Pos* apple)
+int checkColisionApple(struct SnakeArray* arr, struct Pos* apple)
 {
-	if (snake->head.x == apple->x && snake->head.y == apple->y) {
-		snake->length++;
-		snake->body = resizeBody(snake->body, snake->length);
-		*apple = generateApple();
-		return 1;
+	for (int i = 0; i < arr->lng; i++) {
+		if (arr->array[i]->head.x == apple->x && arr->array[i]->head.y == apple->y) {
+			arr->array[i]->length++;
+			arr->array[i]->body = resizeBody(arr->array[i]->body, arr->array[i]->length);
+			*apple = generateApple(arr);
+			return 1;
+		}
 	}return 0;
 }
 
@@ -182,6 +264,35 @@ int checkColisionSnake(struct Snake* snake, struct Snake* ekans)
 	return 0;
 }
 
+void chceckColisionSnakes(struct SnakeArray* arr)
+{
+	int* list = malloc(arr->lng * sizeof(int));
+	for (int i = 0; i < arr->lng; i++) {
+		list[i] = 0;
+	}
+	for (int i = 0; i < arr->lng; i++) {
+		for (int j = i; j < arr->lng; j++) {
+			if (arr->array[i] != arr->array[j]) {
+				for (int k = 0; k < arr->array[j]->length; k++) {
+					if (arr->array[i]->head.x == arr->array[j]->body[k].x && arr->array[i]->head.y == arr->array[j]->body[k].y) {
+						list[i] = 1;
+					}
+				}
+			}
+			else {
+				if (checkColisionSnake(arr->array[i], arr->array[i])) {
+					list[i] = 1;
+				}
+			}
+		}
+	}
+	for (int i = 0; i < arr->lng; i++) {
+		if (list[i]) {
+			removeSnake(arr, arr->array[i]);
+		}
+	}
+}
+
 struct Pos shiftArray(struct Pos* body, int lng)
 {
 	struct Pos last = body[lng - 1];
@@ -190,11 +301,26 @@ struct Pos shiftArray(struct Pos* body, int lng)
 	}return last;
 }
 
-struct Pos generateApple()
+int appleonSnake(struct SnakeArray* arr,struct Pos pos) {
+	for (int i = 0; i < arr->lng; i++) {
+		for (int j = 0; j < arr->array[i]->length; j++) {
+			if (pos.x == arr->array[i]->body[j].x && pos.y == arr->array[i]->body[j].y) {
+				return 1;
+			}
+		}
+	}return 0;
+}
+
+struct Pos generateApple(struct SnakeArray* arr)
 {
 	int maxY, maxX;
 	getmaxyx(stdscr, maxY, maxX);
-	struct Pos apple = { rand() % (maxY - 4) + 2,rand() % (maxX - 4) + 2 };
+	struct Pos apple;
+	do {
+		apple.x = rand() % (maxY - 4) + 2;
+		apple.y = rand() % (maxX - 4) + 2;
+	} while (appleonSnake(arr, apple));
+	
 	return apple;
 }
 
@@ -234,5 +360,4 @@ void initCurses()
 	curs_set(0);
 	start_color();
 	init_pair(1, COLOR_RED, COLOR_BLACK);
-	init_pair(2, COLOR_GREEN, COLOR_BLACK);
 }
